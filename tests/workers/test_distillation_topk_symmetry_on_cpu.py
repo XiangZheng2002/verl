@@ -72,7 +72,7 @@ def _make_logits_processor(keys):
     student_logits.shape[:2]; we mimic that contract.
     """
 
-    def _proc(student_logits, data):
+    def _proc(student_logits, data, student_logits_temperature=None):
         n = student_logits.shape[1]
         return {k: torch.full((1, n), float(i + 1)) for i, k in enumerate(keys)}
 
