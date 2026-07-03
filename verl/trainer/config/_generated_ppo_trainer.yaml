@@ -791,6 +791,9 @@ distillation:
     distillation_loss_coef: 1.0
     loss_max_clamp: null
     log_prob_min_clamp: null
+    clip_tau: null
+    clamp_negative_to_zero: true
+    loss_temperature: null
     use_policy_gradient: false
     policy_loss_mode: vanilla
     clip_ratio: 0.2
@@ -829,6 +832,15 @@ distillation:
         response_length: ${oc.select:actor_rollout_ref.rollout.response_length}
         temperature: ${oc.select:actor_rollout_ref.rollout.temperature}
   teacher_key: data_source
+  self_distillation:
+    _target_: verl.workers.config.SelfDistillationConfig
+    enabled: false
+    teacher_weights: frozen
+    reference_key: reward_model.ground_truth
+    problem_key: problem
+    teacher_thinking: true
+    max_reference_length: 2048
+    max_bridge_length: 256
 trainer:
   balance_batch: true
   total_epochs: 30
