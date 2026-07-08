@@ -60,7 +60,6 @@ tracking metrics to diagnose and correct off-policy issues.
 - Off-policy RL (theoretical basis for IS): https://fengyao.notion.site/off-policy-rl
 """
 
-import logging
 import math
 from typing import Any, Optional
 
@@ -70,15 +69,6 @@ import verl.utils.torch_functional as verl_F
 from verl.protocol import DataProto
 from verl.trainer.config.algorithm import RolloutCorrectionConfig
 from verl.workers.config.actor import PolicyLossConfig
-
-logger = logging.getLogger(__name__)
-
-# Guard threshold: rollout↔train KL on sampled tokens is ~1e-3 for a healthy run.
-# A value this high means the rollout engine and the actor recompute strongly
-# disagree on the sampled tokens — typically engine-level decode corruption
-# (e.g. Qwen2.5-VL + enforce_eager=True on vLLM 0.11.0 under high concurrency),
-# which GRPO has no brake for. Surface it loudly instead of training on bad data.
-ROLLOUT_CORR_KL_WARN_THRESHOLD = 0.05
 
 # Safety bound to prevent numerical overflow/underflow when exponentiating
 # exp(20) ≈ 485 million (upper limit for stable weights), exp(-20) ≈ 2e-9 (lower limit)
@@ -900,20 +890,6 @@ def compute_rollout_correction_and_rejection_mask(
             metrics_scalar[f"rollout_corr/{key}"] = value.item()
         else:
             metrics_scalar[f"rollout_corr/{key}"] = value
-
-    # Guard: alert when rollout↔train logprobs disagree far more than numerical
-    # noise would explain (see ROLLOUT_CORR_KL_WARN_THRESHOLD). This is the signal
-    # that would have caught the DeepEyes-v1 collapse at step 1.
-    _kl = metrics_scalar.get("rollout_corr/kl")
-    if _kl is not None and _kl > ROLLOUT_CORR_KL_WARN_THRESHOLD:
-        logger.warning(
-            "[rollout-corr] rollout<->train KL=%.4f exceeds %.3f: rollout and actor "
-            "logprobs strongly disagree on sampled tokens. Suspect rollout-engine "
-            "corruption (check rollout.enforce_eager / vLLM version); GRPO has no brake "
-            "for this and will train on the bad data.",
-            _kl,
-            ROLLOUT_CORR_KL_WARN_THRESHOLD,
-        )
 
     # Step 7: Wrap IS weights in DataProto for consistency with API
     rollout_is_weights_proto: Optional[DataProto] = None
