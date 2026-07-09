@@ -414,8 +414,6 @@ class ToolAgentLoop(AgentLoopBase):
                 # assistant/tool messages stay well-paired; arguments decode to {} on
                 # failure and _call_tool surfaces the "Invalid JSON / Unknown function"
                 # error back to the model as a tool turn, so the rollout continues.
-                # This is the native tool_agent_loop behavior and matches official
-                # DeepEyes visual_toolbox_v2.execute (feed the error back, keep going).
                 logger.warning(
                     f"Invalid tool call arguments for '{tool_call.name}': expected a JSON object string, "
                     f"got {tool_call.arguments!r}"
