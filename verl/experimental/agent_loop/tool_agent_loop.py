@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from enum import Enum
 from typing import Any, Optional
 from uuid import uuid4
@@ -288,6 +289,14 @@ class ToolAgentLoop(AgentLoopBase):
         assistant_content, agent_data.tool_calls = await self.tool_parser.extract_tool_calls(
             agent_data.response_ids, tools
         )
+        # Official DeepEyes semantics (visual_toolbox_v2.execute): an <answer> block
+        # ends the episode even if the response also contains tool calls, and only
+        # the last <tool_call> match is executed (extract_action takes match[-1]).
+        if agent_data.tool_calls:
+            if re.search(r"<answer>.*?</answer>", assistant_content or "", re.DOTALL):
+                agent_data.tool_calls = []
+            else:
+                agent_data.tool_calls = agent_data.tool_calls[-self.max_parallel_calls :]
         agent_data.messages.append(self._build_assistant_message(assistant_content, agent_data))
 
         if agent_data.tool_calls:
@@ -409,10 +418,15 @@ class ToolAgentLoop(AgentLoopBase):
                 OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.arguments)
             )
             if has_decode_error:
-                raise ValueError(
+                # Official DeepEyes (visual_toolbox_v2.execute) treats a malformed tool
+                # call as a failed turn: the error is fed back to the model and the
+                # rollout continues. Leave it out of the structured tool_calls here;
+                # _call_tool surfaces the JSON error as the tool response.
+                logger.warning(
                     f"Invalid tool call arguments for '{tool_call.name}': expected a JSON object string, "
                     f"got {tool_call.arguments!r}"
                 )
+                continue
             tool_call_message = {
                 "type": "function",
                 "function": function_call.model_dump(),
@@ -420,7 +434,8 @@ class ToolAgentLoop(AgentLoopBase):
             if tool_call.tool_call_id is not None:
                 tool_call_message["id"] = tool_call.tool_call_id
             tool_calls.append(tool_call_message)
-        message["tool_calls"] = tool_calls
+        if tool_calls:
+            message["tool_calls"] = tool_calls
         return message
 
     async def _call_tool(
