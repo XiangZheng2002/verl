@@ -129,6 +129,60 @@ class HermesToolParser(ToolParser):
         return content, function_calls
 
 
+@ToolParser.register("deepeyes")
+class DeepEyesToolParser(HermesToolParser):
+    """Hermes ``<tool_call>`` parsing + DeepEyes ``visual_toolbox_v2.execute`` turn
+    semantics, kept OUT of the shared :class:`ToolAgentLoop` so other experiments are
+    unaffected. Opt in with ``rollout.multi_turn.format=deepeyes``.
+
+    Two rules mirror the official DeepEyes env (Visual-Agent/DeepEyes
+    ``mm_process_engine/visual_toolbox_v2.py::execute``):
+
+    - **answer-first**: an ``<answer>...</answer>`` block ends the episode even when
+      the response also contains a ``<tool_call>``. Official runs ``extract_answer``
+      on the RAW generation *before* dispatching a tool, so the check runs on the raw
+      decoded text — which also catches an ``<answer>`` nested inside a malformed
+      tool-call's arguments (the exact payload that crashed run ``mv1anezn``; the base
+      loop's earlier check ran on the tool-call-stripped content and missed it).
+    - **last tool call only**: when several ``<tool_call>`` blocks appear, keep the
+      last (official ``extract_action`` takes ``match[-1]``); Hermes returns all.
+
+    Returning ``[]`` makes :class:`ToolAgentLoop` terminate the episode; returning a
+    single call makes it run exactly that tool.
+    """
+
+    _answer_regex = regex.compile(r"<answer>.*?</answer>", regex.DOTALL)
+
+    @rollout_trace_op
+    async def extract_tool_calls(
+        self, responses_ids: list[int], tools: list[OpenAIFunctionToolSchema] = None
+    ) -> tuple[str, list[FunctionCall]]:
+        loop = get_event_loop()
+        text = await loop.run_in_executor(None, self.tokenizer.decode, responses_ids)
+
+        # answer-first: an <answer> on the raw string ends the episode (official checks
+        # it before extract_action), whether or not a <tool_call> is also present.
+        if self._answer_regex.search(text):
+            return text, []
+
+        if self.tool_call_start_token not in text or self.tool_call_end_token not in text:
+            return text, []
+
+        # official extract_action takes match[-1] -> keep only the last <tool_call>.
+        matches = self.tool_call_regex.findall(text)[-1:]
+        function_calls = []
+        for match in matches:
+            try:
+                function_call = json.loads(match)
+                name, arguments = function_call["name"], function_call["arguments"]
+                function_calls.append(FunctionCall(name=name, arguments=json.dumps(arguments, ensure_ascii=False)))
+            except Exception as e:
+                logger.error(f"Failed to decode tool call: {e}")
+
+        content = self.tool_call_regex.sub("", text)
+        return content, function_calls
+
+
 @ToolParser.register("gpt-oss")
 class GptOssToolParser(ToolParser):
     """
