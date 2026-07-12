@@ -409,24 +409,23 @@ class ToolAgentLoop(AgentLoopBase):
                 OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.arguments)
             )
             if has_decode_error:
-                # A malformed tool call must not kill the job (this used to `raise
-                # ValueError`, which crashed the run). Keep the call registered so the
-                # assistant/tool messages stay well-paired; arguments decode to {} on
-                # failure and _call_tool surfaces the "Invalid JSON / Unknown function"
-                # error back to the model as a tool turn, so the rollout continues.
                 logger.warning(
                     f"Invalid tool call arguments for '{tool_call.name}': expected a JSON object string, "
-                    f"got {tool_call.arguments!r}"
+                    f"got {tool_call.arguments!r}; keeping the raw arguments in the assistant message. "
+                    f"Note: re-applying the chat template to this message may render differently from "
+                    f"the model's actual generation because the tool call arguments are in invalid format."
                 )
+                function_dict = {"name": tool_call.name, "arguments": tool_call.arguments}
+            else:
+                function_dict = function_call.model_dump()
             tool_call_message = {
                 "type": "function",
-                "function": function_call.model_dump(),
+                "function": function_dict,
             }
             if tool_call.tool_call_id is not None:
                 tool_call_message["id"] = tool_call.tool_call_id
             tool_calls.append(tool_call_message)
-        if tool_calls:
-            message["tool_calls"] = tool_calls
+        message["tool_calls"] = tool_calls
         return message
 
     async def _call_tool(
